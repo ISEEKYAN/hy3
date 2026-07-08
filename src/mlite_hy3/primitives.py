@@ -17,15 +17,14 @@ class Hy3Router(nn.Module):
         self.num_experts = config.num_experts
         self.scaling_factor = config.router_scaling_factor
         self.gate = nn.Linear(config.hidden_size, config.num_experts, bias=False)
-        self.register_buffer(
-            "expert_bias",
+        self.expert_bias = nn.Parameter(
             torch.zeros(config.num_experts, dtype=torch.float32),
-            persistent=True,
+            requires_grad=False,
         )
 
     def _apply(self, fn):
         result = super()._apply(fn)
-        self.expert_bias = self.expert_bias.float()
+        self.expert_bias.data = self.expert_bias.data.float()
         return result
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
