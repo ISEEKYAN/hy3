@@ -1,4 +1,4 @@
-# mlite-hy3
+# hy3
 
 ## What this repository is
 
@@ -14,7 +14,7 @@ The package contains:
 
 Importing `mlite_hy3` has no registration side effect. Applications explicitly call `register_model()` before asking Megatron Lite to resolve or build Hy3. No source file under `megatron.lite` is replaced or monkey-patched.
 
-For expert-parallel HF export, use a Megatron Lite revision that includes the generic TE `GroupedLinear` local-to-global expert-name export fix. This fix belongs in Megatron Lite because it is model-independent; it is deliberately not copied into this repository. `tests/unit/test_checkpoint.py` contains the corresponding regression test.
+For expert-parallel HF export, use a Megatron Lite revision that includes the generic TE `GroupedLinear` local-to-global expert-name export fix. This fix belongs in Megatron Lite because it is model-independent; it is deliberately not copied into this repository.
 
 The frozen reference architecture and primitive mapping are documented in [docs/architecture.md](docs/architecture.md).
 
@@ -24,10 +24,10 @@ Megatron Lite currently lives in `experimental/lite` of Megatron-LM. Put that so
 
 ```bash
 git clone https://github.com/ISEEKYAN/Megatron-LM.git
-git clone https://github.com/ISEEKYAN/mlite-hy3.git
+git clone https://github.com/ISEEKYAN/hy3.git
 
 export PYTHONPATH="$PWD/Megatron-LM/experimental/lite:${PYTHONPATH}"
-python -m pip install -e ./mlite-hy3
+python -m pip install -e ./hy3
 ```
 
 Register Hy3 before constructing a runtime:
@@ -51,7 +51,7 @@ protocol = get_train_runtime_module("hy3")
 Run the CPU checks:
 
 ```bash
-cd mlite-hy3
+cd hy3
 python -m pip install -e '.[test]'
 python -m pytest -q tests/unit
 ```
