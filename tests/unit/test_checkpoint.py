@@ -78,6 +78,26 @@ def test_weight_spec_round_trips_qkv_dense_and_shared_swiglu():
         )
 
 
+def test_weight_spec_exports_runtime_expert_parameter_names():
+    spec = Hy3WeightSpec(_config())
+    hidden = spec.config.hidden_size
+    gate = torch.arange(4 * hidden).reshape(4, hidden)
+    up = gate + 1000
+    packed = torch.cat([gate, up])
+
+    fc1 = dict(spec.native_to_hf("layers.1.moe.experts.fc1.weight0", packed))
+    fc2 = dict(
+        spec.native_to_hf(
+            "layers.1.moe.experts.fc2.weight0",
+            torch.arange(hidden * 4).reshape(hidden, 4),
+        )
+    )
+
+    assert torch.equal(fc1["model.layers.1.mlp.experts.0.gate_proj.weight"], gate)
+    assert torch.equal(fc1["model.layers.1.mlp.experts.0.up_proj.weight"], up)
+    assert "model.layers.1.mlp.experts.0.down_proj.weight" in fc2
+
+
 def test_checkpoint_tensor_iterator_includes_only_mapped_persistent_buffers():
     class Module(nn.Module):
         def __init__(self):

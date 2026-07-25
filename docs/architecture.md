@@ -6,10 +6,10 @@ This document freezes the public `tencent/Hy3` architecture used by this externa
 
 | Input | Revision or digest |
 | --- | --- |
-| Hugging Face repository | `tencent/Hy3@716aa7241bd6d95896be4ebfc761162a9c4d49ef` |
-| `config.json` SHA-256 | `663036ceca3d8a178cd772739566c262caffdecebaed6c1d76b464d729bb2951` |
+| Hugging Face repository | `tencent/Hy3@a960ebc3da325ba167f069f76c41eb62c9280d22` |
+| `config.json` SHA-256 | `0c9daab42bff9cce1b6f058b10d7b730f76d583e583e28ad56e92b36373246f0` |
 | `model.safetensors.index.json` SHA-256 | `9594f1a9419e62ca7afca51bb644f38ef19039374f7812449381ccf42f0ef79b` |
-| Reference implementation | Transformers `hy_v3` (`transformers_version=5.6.0`) |
+| Reference implementation | Transformers `HYV3ForCausalLM` |
 
 Only the public configuration and weight index are needed for the structural contract. The 598 GB checkpoint is deliberately not copied into this repository.
 

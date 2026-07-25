@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Generator, Mapping
 
 import torch
@@ -181,7 +182,12 @@ class Hy3WeightSpec:
     ) -> list[tuple[str, torch.Tensor]]:
         if native_name == "mtp_embed.embedding.weight":
             return []
-        targets = self.weight_map().get(native_name)
+        mapped_name = re.sub(
+            r"\.experts\.fc([12])\.weight(\d+)$",
+            r".experts._fc\1_weight_\2",
+            native_name,
+        )
+        targets = self.weight_map().get(mapped_name)
         if targets is None:
             return [(native_name, tensor)]
         if len(targets) == 3:

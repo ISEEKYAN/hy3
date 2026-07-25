@@ -56,10 +56,21 @@ python -m pip install -e '.[test]'
 python -m pytest -q tests/unit
 ```
 
-The GPU suites require CUDA, Transformer Engine, Transformers 5.6.0 with `HYV3ForCausalLM`, and an initialized distributed environment. Run them through the cluster scheduler, not on a login node:
+The GPU suites require CUDA, Transformer Engine, a Transformers release with
+`HYV3ForCausalLM`, and an initialized distributed environment. The three-way
+suite additionally requires a current
+[`NVIDIA-NeMo/Megatron-Bridge`](https://github.com/NVIDIA-NeMo/Megatron-Bridge)
+checkout that contains `HYV3Bridge`. Run them through the cluster scheduler,
+not on a login node:
 
 ```bash
 python -m pytest -q tests/smoke/test_hy3_hf_parity.py
+python -m pytest -q -s \
+  tests/smoke/test_hy3_three_way_parity.py \
+  -k megatron_bridge_hy3_config_contract
+python -m pytest -q -s \
+  tests/smoke/test_hy3_three_way_parity.py \
+  -k weight_and_logits_parity
 
 torchrun --nproc-per-node=2 -m pytest -q \
   tests/smoke/test_hy3_acceptance.py \
@@ -68,13 +79,23 @@ torchrun --nproc-per-node=2 -m pytest -q \
 
 Set `HY3_TOPOLOGY` to `ep2`, `cp2_thd`, or `cp2_ep2`; the last option requires four ranks. The test asserts the requested topology and communication path so a fallback cannot silently pass.
 
+See [the three-way parity report](docs/three-way-parity.md) for the frozen
+references, proxy contract, and exact pairwise metrics.
+
 ## The four-stage model-support workflow
 
 This port follows the same staged workflow used for internal and external Megatron Lite model integrations.
 
 ### 1. Freeze the independent reference
 
-Pin the public model revision, configuration digest, weight-index digest, and independent implementation before writing native code. For Hy3, the reference is Hugging Face revision `716aa7241bd6d95896be4ebfc761162a9c4d49ef` with Transformers 5.6.0. The manifest records 80 decoder layers plus one MTP layer, GQA, a dense first layer, routed MoE layers, persistent expert-selection bias, and one shared expert.
+Pin the public model revision, configuration digest, weight-index digest, and
+independent implementation before writing native code. For Hy3, the current
+reference is Hugging Face revision
+`a960ebc3da325ba167f069f76c41eb62c9280d22`; relative to the original freeze it
+only adds the explicit `dtype=bfloat16` config field and leaves the weight index
+unchanged. The manifest records 80 decoder layers plus one MTP layer, GQA, a
+dense first layer, routed MoE layers, persistent expert-selection bias, and one
+shared expert.
 
 ### 2. Map capabilities to existing primitives
 
