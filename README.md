@@ -125,7 +125,8 @@ read from a real Tencent Hy3 checkpoint.
 The acceptance does not require downloading the full checkpoint.
 `scripts/prepare_hy3_real_weights.py` reads the pinned official weight index and
 materializes only enough complete safetensors shards to cross the real-weight
-element threshold:
+element threshold. `scripts/slurm/hy3_real_weights.sbatch` is its CPU-only
+scheduler entry point:
 
 ```bash
 python scripts/prepare_hy3_real_weights.py \
