@@ -26,6 +26,8 @@ echo "HY3_REAL_WEIGHT_MODULES hy3=$actual_hy3_commit mlite=$actual_mlite_commit"
 
 export PYTHONNOUSERSITE=1
 export PYTHONPATH="$HY3_REPO/src:$MLITE_REPO/experimental/lite:$PYTHON_DEPS"
+export HF_HOME="${HY3_REAL_CHECKPOINT}.hf-cache"
+mkdir -p "$HF_HOME"
 srun \
   --container-image="$CONTAINER_IMAGE" \
   --container-mounts=/lustre:/lustre \
