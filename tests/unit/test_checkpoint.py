@@ -4,7 +4,12 @@ import torch
 import torch.nn as nn
 
 from mlite_hy3.config import Hy3Config
-from mlite_hy3.lite.checkpoint import Hy3WeightSpec, iter_checkpoint_tensors
+from mlite_hy3.lite.checkpoint import (
+    Hy3WeightSpec,
+    _export_mxfp4_weights,
+    _resolve_param_name_canonical,
+    iter_checkpoint_tensors,
+)
 
 
 def _config() -> Hy3Config:
@@ -50,9 +55,7 @@ def test_weight_spec_round_trips_qkv_dense_and_shared_swiglu():
     query = torch.arange(8 * hidden).reshape(8, hidden)
     key = torch.arange(4 * hidden).reshape(4, hidden) + 1000
     value = torch.arange(4 * hidden).reshape(4, hidden) + 2000
-    packed = spec.hf_to_native(
-        "layers.0.attn.qkv.linear.weight", [query, key, value]
-    )
+    packed = spec.hf_to_native("layers.0.attn.qkv.linear.weight", [query, key, value])
     qkv = dict(spec.native_to_hf("layers.0.attn.qkv.linear.weight", packed))
     assert torch.equal(qkv["model.layers.0.self_attn.q_proj.weight"], query)
     assert torch.equal(qkv["model.layers.0.self_attn.k_proj.weight"], key)
@@ -109,3 +112,54 @@ def test_checkpoint_tensor_iterator_includes_only_mapped_persistent_buffers():
     weight_map = {"weight": ["weight"], "expert_bias": ["expert_bias"]}
     tensors = dict(iter_checkpoint_tensors(Module(), weight_map))
     assert set(tensors) == {"weight", "expert_bias"}
+
+
+def test_qat_master_resolves_to_the_logical_checkpoint_name():
+    from megatron.lite.primitive.quantization.qat import (
+        QATSpec,
+        apply_qat_to_chunks,
+    )
+
+    model = nn.Module()
+    model.layers = nn.ModuleList([nn.Module()])
+    model.layers[0].moe = nn.Module()
+    model.layers[0].moe.experts = nn.Module()
+    model.layers[0].moe.experts.fc1 = nn.Linear(32, 8, bias=False)
+    apply_qat_to_chunks(
+        [model],
+        QATSpec(
+            enabled=True,
+            format="mxfp4",
+            ignore_patterns=(),
+        ),
+    )
+
+    logical = "layers.0.moe.experts.fc1.weight"
+    actual = _resolve_param_name_canonical(logical, model.state_dict())
+
+    assert actual == ("layers.0.moe.experts.fc1.parametrizations.weight.original")
+
+
+def test_mxfp4_export_only_packs_routed_expert_weights():
+    expert = torch.arange(64, dtype=torch.float32).reshape(2, 32) - 31
+    source = {
+        "model.layers.1.mlp.experts.0.gate_proj.weight": expert,
+        "model.layers.1.self_attn.q_proj.weight": expert.clone(),
+        "model.layers.1.mlp.shared_mlp.up_proj.weight": expert.clone(),
+        "model.layers.0.mlp.up_proj.weight": expert.clone(),
+        "model.layers.1.mlp.router.gate.weight": expert.clone(),
+        "model.embed_tokens.weight": expert.clone(),
+        "lm_head.weight": expert.clone(),
+    }
+
+    exported = dict(_export_mxfp4_weights(source.items()))
+    prefix = "model.layers.1.mlp.experts.0.gate_proj"
+
+    assert exported[f"{prefix}.weight"].dtype == torch.uint8
+    assert exported[f"{prefix}.weight"].shape == (2, 16)
+    assert exported[f"{prefix}.weight_scale"].dtype == torch.uint8
+    assert exported[f"{prefix}.weight_scale"].shape == (2, 1)
+    for name, tensor in source.items():
+        if ".experts." not in name:
+            assert torch.equal(exported[name], tensor)
+            assert f"{name[:-7]}.weight_scale" not in exported

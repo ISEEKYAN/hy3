@@ -9,6 +9,13 @@ from collections.abc import Generator, Mapping
 import torch
 import torch.nn as nn
 from torch.distributed.tensor import Replicate, Shard
+from megatron.lite.primitive.quantization.mxfp4 import (
+    MXFP4_BLOCK_SIZE,
+    quantize_mxfp4,
+)
+from megatron.lite.primitive.quantization.qat import (
+    canonical_state_key as _canonical_state_key,
+)
 
 from mlite_hy3.config import Hy3Config
 
@@ -27,7 +34,9 @@ def pack_grouped_query_qkv(
     query = query.view(num_key_value_heads, queries_per_group * head_dim, -1)
     key = key.view(num_key_value_heads, head_dim, -1)
     value = value.view(num_key_value_heads, head_dim, -1)
-    return torch.cat([query, key, value], dim=1).reshape(-1, query.shape[-1]).contiguous()
+    return (
+        torch.cat([query, key, value], dim=1).reshape(-1, query.shape[-1]).contiguous()
+    )
 
 
 def unpack_grouped_query_qkv(
@@ -90,7 +99,9 @@ class Hy3WeightSpec:
                 ],
                 f"{native_prefix}.attn.q_norm.weight": [f"{attention}.q_norm.weight"],
                 f"{native_prefix}.attn.k_norm.weight": [f"{attention}.k_norm.weight"],
-                f"{native_prefix}.attn.proj.linear.weight": [f"{attention}.o_proj.weight"],
+                f"{native_prefix}.attn.proj.linear.weight": [
+                    f"{attention}.o_proj.weight"
+                ],
                 f"{native_prefix}.mlp_norm.weight": [
                     f"{hf_prefix}.post_attention_layernorm.weight"
                 ],
@@ -106,7 +117,9 @@ class Hy3WeightSpec:
         mlp = f"{hf_prefix}.mlp"
         weight_map.update(
             {
-                f"{native_prefix}.moe.router.gate.weight": [f"{mlp}.router.gate.weight"],
+                f"{native_prefix}.moe.router.gate.weight": [
+                    f"{mlp}.router.gate.weight"
+                ],
                 f"{native_prefix}.moe.router.expert_bias": [f"{mlp}.expert_bias"],
                 f"{native_prefix}.moe.shared_mlp.gate_up.linear.weight": [
                     f"{mlp}.shared_mlp.gate_proj.weight",
@@ -158,14 +171,18 @@ class Hy3WeightSpec:
                     f"{native}.enorm.weight": [f"{hf}.enorm.weight"],
                     f"{native}.hnorm.weight": [f"{hf}.hnorm.weight"],
                     f"{native}.eh_proj.linear.weight": [f"{hf}.eh_proj.weight"],
-                    f"{native}.final_layernorm.weight": [f"{hf}.final_layernorm.weight"],
+                    f"{native}.final_layernorm.weight": [
+                        f"{hf}.final_layernorm.weight"
+                    ],
                 }
             )
             self._add_attention(result, transformer, hf)
             self._add_sparse_mlp(result, transformer, hf)
         return result
 
-    def hf_to_native(self, native_name: str, tensors: list[torch.Tensor]) -> torch.Tensor:
+    def hf_to_native(
+        self, native_name: str, tensors: list[torch.Tensor]
+    ) -> torch.Tensor:
         if len(tensors) == 3:
             return pack_grouped_query_qkv(
                 *tensors,
@@ -180,8 +197,19 @@ class Hy3WeightSpec:
     def native_to_hf(
         self, native_name: str, tensor: torch.Tensor
     ) -> list[tuple[str, torch.Tensor]]:
+        native_name = _canonical_state_key(native_name)
         if native_name == "mtp_embed.embedding.weight":
             return []
+        stacked_expert = re.match(
+            r"^(.*\.moe\.experts)\.fc([12])\.weight$", native_name
+        )
+        if stacked_expert is not None and tensor.ndim == 3:
+            prefix, fc_tag = stacked_expert.groups()
+            result = []
+            for expert, expert_tensor in enumerate(tensor):
+                synthetic = f"{prefix}._fc{fc_tag}_weight_{expert}"
+                result.extend(self.native_to_hf(synthetic, expert_tensor))
+            return result
         mapped_name = re.sub(
             r"\.experts\.fc([12])\.weight(\d+)$",
             r".experts._fc\1_weight_\2",
@@ -206,6 +234,7 @@ class Hy3WeightSpec:
         return None
 
     def tp_spec(self, native_name: str) -> tuple[int, int] | None:
+        native_name = _canonical_state_key(native_name)
         if self.is_expert(native_name):
             if "fc1" in native_name:
                 return (0, 1)
@@ -227,14 +256,17 @@ class Hy3WeightSpec:
         return None
 
     def is_expert(self, native_name: str) -> bool:
+        native_name = _canonical_state_key(native_name)
         return ".experts." in native_name and ".router." not in native_name
 
     def expert_global_id(self, native_name: str) -> int | None:
+        native_name = _canonical_state_key(native_name)
         if "_fc1_weight_" in native_name or "_fc2_weight_" in native_name:
             return int(native_name.rsplit("_", 1)[1])
         return None
 
     def expert_local_name(self, native_name: str, local_idx: int) -> str:
+        native_name = _canonical_state_key(native_name)
         prefix = native_name.rsplit("._fc", 1)[0]
         fc_tag = "fc1" if "_fc1_weight_" in native_name else "fc2"
         return f"{prefix}.{fc_tag}.weight{local_idx}"
@@ -260,15 +292,71 @@ def PLACEMENT_FN(param_name: str) -> list:
 
 
 def load_hf_weights(model, path: str, config: Hy3Config, ps) -> None:
+    from megatron.lite.primitive.ckpt import hf_weights as hf_weights_module
     from megatron.lite.primitive.ckpt.hf_weights import load_hf_weights as load
 
-    load(model, path, Hy3WeightSpec(config), ps, vocab_size=config.vocab_size)
+    original_resolve = hf_weights_module._resolve_param_name
+    hf_weights_module._resolve_param_name = _resolve_param_name_canonical
+    try:
+        load(model, path, Hy3WeightSpec(config), ps, vocab_size=config.vocab_size)
+    finally:
+        hf_weights_module._resolve_param_name = original_resolve
 
 
 def export_hf_weights(model, config: Hy3Config, ps, **kwargs):
     from megatron.lite.primitive.ckpt.hf_weights import export_hf_weights as export
 
-    yield from export(model, Hy3WeightSpec(config), ps, vocab_size=config.vocab_size, **kwargs)
+    target = kwargs.pop("target", "hf")
+    weights = export(
+        model,
+        Hy3WeightSpec(config),
+        ps,
+        vocab_size=config.vocab_size,
+        **kwargs,
+    )
+    if target in {"hf", "bf16"}:
+        yield from weights
+        return
+    if target != "mxfp4":
+        raise ValueError(f"Hy3 does not support resync target {target!r}")
+    yield from _export_mxfp4_weights(weights)
+
+
+_ROUTED_EXPERT_WEIGHT = re.compile(
+    r"^model\.layers\.\d+\.mlp\.experts\.\d+\."
+    r"(gate_proj|up_proj|down_proj)\.weight$"
+)
+
+
+def _export_mxfp4_weights(weights):
+    """Pack routed-expert HF weights and leave every excluded tensor in BF16."""
+    for name, tensor in weights:
+        if not _ROUTED_EXPERT_WEIGHT.fullmatch(name):
+            yield name, tensor
+            continue
+        if tensor.ndim != 2 or not tensor.dtype.is_floating_point:
+            raise ValueError(f"MXFP4 routed-expert weight {name!r} must be floating 2D")
+        if tensor.shape[-1] % MXFP4_BLOCK_SIZE:
+            raise ValueError(
+                f"MXFP4 weight {name!r} has input dimension {tensor.shape[-1]}, "
+                f"which is not divisible by {MXFP4_BLOCK_SIZE}"
+            )
+        packed, scale = quantize_mxfp4(tensor)
+        yield name, packed.view(torch.uint8)
+        yield f"{name[:-7]}.weight_scale", scale.view(torch.uint8)
+
+
+def _resolve_param_name_canonical(name: str, state_dict: dict) -> str | None:
+    """Resolve one logical checkpoint name onto its QAT BF16 master."""
+    canonical = {_canonical_state_key(key): key for key in state_dict}
+    if name in state_dict:
+        return name
+    if name in canonical:
+        return canonical[name]
+    for logical, key in canonical.items():
+        if name in logical:
+            return key
+    return None
 
 
 def save_hf_weights(model, path: str, config: Hy3Config, ps) -> None:

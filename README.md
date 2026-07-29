@@ -82,6 +82,57 @@ Set `HY3_TOPOLOGY` to `ep2`, `cp2_thd`, or `cp2_ep2`; the last option requires f
 See [the three-way parity report](docs/three-way-parity.md) for the frozen
 references, proxy contract, and exact pairwise metrics.
 
+## Routed-expert MXFP4 QAT
+
+Hy3 exposes Megatron Lite's standard weight-only MXFP4 QAT through
+`ImplConfig.qat`:
+
+```python
+impl = ImplConfig(
+    optimizer="dist_opt",
+    qat={"enabled": True, "format": "mxfp4"},
+)
+bundle = build_model(config, impl_cfg=impl)
+print(bundle.extras["qat"])
+```
+
+The model package only declares target names; fake quantization, STE, the BF16
+master weight, the fixed 32-element MXFP4 block, ModelOpt-compatible numerics,
+and canonical QAT state names remain owned by Megatron Lite's quantization
+primitive. QAT is applied before optimizer construction.
+
+The scope matches K3's routed-expert policy: only `moe.experts.fc1` and
+`moe.experts.fc2` linears are quantized, including routed experts in an enabled
+MTP layer. Attention, the first dense MLP, the sparse block's shared MLP,
+embeddings, router and correction bias, and `lm_head` stay in BF16. Hy3 has no
+K3-style standalone residual-projection modules: its attention output
+projection is under `attn` and is excluded, while its residual additions have
+no weight to quantize.
+
+`export_hf_weights(..., target="mxfp4")` emits compressed-tensors-style packed
+`weight` plus `weight_scale` pairs for those routed-expert weights only. Plain
+HF/BF16 export remains the default, and checkpoint load maps logical weight
+names onto the surviving
+`parametrizations.weight.original` BF16 master.
+
+The scheduler entry point is
+`scripts/slurm/hy3_mxfp4_qat.sbatch`. Before running the test workload it fails
+if the Hy3 or Megatron-LM commit differs from the explicitly requested
+revision, then checks canonical load, BF16 round trip, routed-only packed export,
+forward/backward, and bitwise ModelOpt parity on at least 99,090,432 elements
+read from a real Tencent Hy3 checkpoint.
+
+The acceptance does not require downloading the full checkpoint.
+`scripts/prepare_hy3_real_weights.py` reads the pinned official weight index and
+materializes only enough complete safetensors shards to cross the real-weight
+element threshold:
+
+```bash
+python scripts/prepare_hy3_real_weights.py \
+  --revision a960ebc3da325ba167f069f76c41eb62c9280d22 \
+  --output /path/to/hy3-real-weight-subset
+```
+
 ## The four-stage model-support workflow
 
 This port follows the same staged workflow used for internal and external Megatron Lite model integrations.
