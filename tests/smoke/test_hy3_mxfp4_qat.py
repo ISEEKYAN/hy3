@@ -74,6 +74,21 @@ def test_qat_checkpoint_forward_and_mxfp4_export(tmp_path: Path):
             config,
             impl_cfg=protocol.ImplConfig(parallel=parallel, optimizer=None),
         )
+        routed_parameter_names = sorted(
+            name
+            for name, _ in baseline.chunks[0].named_parameters()
+            if ".moe.experts.fc" in name
+        )
+        print(
+            "HY3_ROUTED_PARAMETER_NAMES=" + json.dumps(routed_parameter_names),
+            flush=True,
+        )
+        assert routed_parameter_names == [
+            "layers.1.moe.experts.fc1.weight0",
+            "layers.1.moe.experts.fc1.weight1",
+            "layers.1.moe.experts.fc2.weight0",
+            "layers.1.moe.experts.fc2.weight1",
+        ]
         baseline_weights = dict(
             export_hf_weights(
                 baseline.chunks[0],
@@ -107,9 +122,9 @@ def test_qat_checkpoint_forward_and_mxfp4_export(tmp_path: Path):
         masters = {
             name
             for name, _ in model.named_parameters()
-            if name.endswith(".parametrizations.weight.original")
+            if ".parametrizations.weight" in name and name.endswith(".original")
         }
-        assert masters
+        assert len(masters) == 4, sorted(masters)
         assert all(".moe.experts." in name for name in masters), sorted(masters)
         assert not any(".shared_mlp." in name for name in masters)
         assert qat.extras["qat"]["quantized_modules"] == len(masters)

@@ -109,6 +109,14 @@ K3-style standalone residual-projection modules: its attention output
 projection is under `attn` and is excluded, while its residual additions have
 no weight to quantize.
 
+The logical scope is the same, but the runtime parameter layout is not. K3's
+reference experts are ordinary linear leaves, while Hy3 uses Transformer
+Engine `GroupedLinear` modules whose local expert masters are named
+`fc1.weight0`, `fc1.weight1`, ..., and `fc2.weight0`, `fc2.weight1`, ....
+The Hy3 name map targets every such local routed-expert parameter explicitly;
+it also remains compatible with a stacked `GroupedLinear.weight` exposed by
+newer Transformer Engine versions.
+
 `export_hf_weights(..., target="mxfp4")` emits compressed-tensors-style packed
 `weight` plus `weight_scale` pairs for those routed-expert weights only. Plain
 HF/BF16 export remains the default, and checkpoint load maps logical weight

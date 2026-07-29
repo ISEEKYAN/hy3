@@ -23,7 +23,6 @@ from mlite_hy3.lite.checkpoint import (
     load_hf_weights as _load_hf_weights,
 )
 from mlite_hy3.lite.model import Hy3Model, Hy3TransformerLayer
-from mlite_hy3.lite.qat import normalize_hy3_qat_spec
 
 if TYPE_CHECKING:
     from megatron.lite.primitive.quantization.qat import QATSpec
@@ -118,9 +117,9 @@ def build_model(model_cfg: Hy3Config, *, impl_cfg: ImplConfig) -> ModelBundle:
         .cuda()
         for index in range(vpp or 1)
     ]
-    from megatron.lite.primitive.quantization.qat import apply_qat_to_chunks
+    from mlite_hy3.lite.qat import apply_hy3_qat_to_chunks
 
-    qat_stats = apply_qat_to_chunks(chunks, normalize_hy3_qat_spec(impl_cfg.qat))
+    qat_stats = apply_hy3_qat_to_chunks(chunks, impl_cfg.qat)
     if recompute:
         for chunk in chunks:
             apply_recompute(chunk.layers, recompute, MODULE_MAP)

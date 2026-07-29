@@ -4,15 +4,25 @@ import torch
 import torch.nn as nn
 import torch.nn.utils.parametrize as parametrize
 
-from megatron.lite.primitive.quantization.qat import apply_qat_to_chunks
-
-from mlite_hy3.lite.qat import normalize_hy3_qat_spec
+from mlite_hy3.lite.qat import apply_hy3_qat_to_chunks
 
 
 class _Linear(nn.Module):
     def __init__(self):
         super().__init__()
         self.weight = nn.Parameter(torch.randn(2, 32))
+
+
+class _SplitGroupedLinear(nn.Module):
+    """CPU stand-in for Hy3's deployed TE GroupedLinear parameter surface."""
+
+    def __init__(self, num_experts: int):
+        super().__init__()
+        for expert in range(num_experts):
+            self.register_parameter(
+                f"weight{expert}",
+                nn.Parameter(torch.randn(2, 32)),
+            )
 
 
 def _toy_hy3_chunk() -> nn.Module:
@@ -40,8 +50,8 @@ def _toy_hy3_chunk() -> nn.Module:
     sparse.moe.shared_mlp.gate_up = _Linear()
     sparse.moe.shared_mlp.down = _Linear()
     sparse.moe.experts = nn.Module()
-    sparse.moe.experts.fc1 = _Linear()
-    sparse.moe.experts.fc2 = _Linear()
+    sparse.moe.experts.fc1 = _SplitGroupedLinear(2)
+    sparse.moe.experts.fc2 = _SplitGroupedLinear(2)
 
     chunk.head = _Linear()
     return chunk
@@ -49,30 +59,32 @@ def _toy_hy3_chunk() -> nn.Module:
 
 def test_mxfp4_qat_only_parametrizes_routed_expert_linears():
     chunk = _toy_hy3_chunk()
-    spec = normalize_hy3_qat_spec(
-        {"enabled": True, "format": "mxfp4", "ignore_patterns": ()}
+    stats = apply_hy3_qat_to_chunks(
+        [chunk], {"enabled": True, "format": "mxfp4", "ignore_patterns": ()}
     )
 
-    stats = apply_qat_to_chunks([chunk], spec)
-    parametrized = {
+    masters = {
         name
-        for name, module in chunk.named_modules()
-        if parametrize.is_parametrized(module, "weight")
+        for name, _ in chunk.named_parameters()
+        if ".parametrizations.weight" in name and name.endswith(".original")
     }
 
-    assert parametrized == {
-        "layers.1.moe.experts.fc1",
-        "layers.1.moe.experts.fc2",
+    assert masters == {
+        "layers.1.moe.experts.fc1.parametrizations.weight0.original",
+        "layers.1.moe.experts.fc1.parametrizations.weight1.original",
+        "layers.1.moe.experts.fc2.parametrizations.weight0.original",
+        "layers.1.moe.experts.fc2.parametrizations.weight1.original",
     }
-    assert stats["quantized_modules"] == 2
+    assert stats["quantized_modules"] == 4
+    assert not any("attn" in name for name in masters)
+    assert not any("shared_mlp" in name for name in masters)
+    assert not any(".mlp." in name for name in masters)
 
 
 def test_disabled_qat_is_inert():
     chunk = _toy_hy3_chunk()
 
-    stats = apply_qat_to_chunks([chunk], normalize_hy3_qat_spec(None))
+    stats = apply_hy3_qat_to_chunks([chunk], None)
 
-    assert not any(
-        parametrize.is_parametrized(module, "weight") for module in chunk.modules()
-    )
+    assert not any(parametrize.is_parametrized(module) for module in chunk.modules())
     assert stats["quantized_modules"] == 0

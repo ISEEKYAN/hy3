@@ -115,29 +115,26 @@ def test_checkpoint_tensor_iterator_includes_only_mapped_persistent_buffers():
 
 
 def test_qat_master_resolves_to_the_logical_checkpoint_name():
-    from megatron.lite.primitive.quantization.qat import (
-        QATSpec,
-        apply_qat_to_chunks,
-    )
+    from mlite_hy3.lite.qat import apply_hy3_qat_to_chunks
 
     model = nn.Module()
     model.layers = nn.ModuleList([nn.Module()])
     model.layers[0].moe = nn.Module()
     model.layers[0].moe.experts = nn.Module()
-    model.layers[0].moe.experts.fc1 = nn.Linear(32, 8, bias=False)
-    apply_qat_to_chunks(
+    model.layers[0].moe.experts.fc1 = nn.Module()
+    model.layers[0].moe.experts.fc1.register_parameter(
+        "weight0",
+        nn.Parameter(torch.randn(8, 32)),
+    )
+    apply_hy3_qat_to_chunks(
         [model],
-        QATSpec(
-            enabled=True,
-            format="mxfp4",
-            ignore_patterns=(),
-        ),
+        {"enabled": True, "format": "mxfp4", "ignore_patterns": ()},
     )
 
-    logical = "layers.0.moe.experts.fc1.weight"
+    logical = "layers.0.moe.experts.fc1.weight0"
     actual = _resolve_param_name_canonical(logical, model.state_dict())
 
-    assert actual == ("layers.0.moe.experts.fc1.parametrizations.weight.original")
+    assert actual == ("layers.0.moe.experts.fc1.parametrizations.weight0.original")
 
 
 def test_mxfp4_export_only_packs_routed_expert_weights():
