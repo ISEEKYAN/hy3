@@ -15,6 +15,7 @@ set -euo pipefail
 : "${MLITE_REPO:?set to the Megatron-LM checkout under test}"
 : "${HY3_REAL_CHECKPOINT:?set to the real Tencent Hy3 HF checkpoint}"
 : "${MODELOPT_SITE:?set to the ModelOpt Python site-packages directory}"
+: "${PYTHON_DEPS:?set to the validated Hy3 Python dependency site}"
 : "${CONTAINER_IMAGE:?set to the validated MLite container image}"
 : "${EXPECTED_HY3_COMMIT:?set to the exact Hy3 commit under test}"
 : "${EXPECTED_MLITE_COMMIT:?set to the exact Megatron-LM commit under test}"
@@ -29,7 +30,7 @@ test "$actual_mlite_commit" = "$EXPECTED_MLITE_COMMIT" || {
   echo "MLITE_COMMIT_MISMATCH expected=$EXPECTED_MLITE_COMMIT actual=$actual_mlite_commit" >&2
   exit 65
 }
-for path in "$HY3_REPO" "$MLITE_REPO" "$HY3_REAL_CHECKPOINT" "$MODELOPT_SITE" "$CONTAINER_IMAGE"; do
+for path in "$HY3_REPO" "$MLITE_REPO" "$HY3_REAL_CHECKPOINT" "$MODELOPT_SITE" "$PYTHON_DEPS" "$CONTAINER_IMAGE"; do
   test -e "$path" || {
     echo "HY3_QAT_REQUIRED_PATH_MISSING $path" >&2
     exit 66
@@ -37,16 +38,18 @@ for path in "$HY3_REPO" "$MLITE_REPO" "$HY3_REAL_CHECKPOINT" "$MODELOPT_SITE" "$
 done
 
 echo "HY3_QAT_MODULES hy3=$actual_hy3_commit mlite=$actual_mlite_commit"
-export PYTHONNOUSERSITE=1
-export PYTHONPATH="$HY3_REPO/src:$MLITE_REPO/experimental/lite:$MODELOPT_SITE${PYTHONPATH:+:$PYTHONPATH}"
-export HY3_REPO MLITE_REPO HY3_REAL_CHECKPOINT
+export HY3_REPO MLITE_REPO HY3_REAL_CHECKPOINT MODELOPT_SITE PYTHON_DEPS
 
 srun \
   --container-image="$CONTAINER_IMAGE" \
   --container-mounts=/lustre:/lustre \
   --export=ALL \
-  bash -lc '
+  /bin/bash -c '
     set -euo pipefail
+    export PATH=/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin
+    unset CONDA_DEFAULT_ENV CONDA_PREFIX PYTHONHOME VIRTUAL_ENV || true
+    export PYTHONNOUSERSITE=1
+    export PYTHONPATH="$HY3_REPO/src:$MLITE_REPO/experimental/lite:$MODELOPT_SITE:$PYTHON_DEPS"
     nvidia-smi --query-gpu=name,uuid,compute_cap --format=csv,noheader
     python - <<'"'"'PY'"'"'
 from pathlib import Path
