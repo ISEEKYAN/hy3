@@ -19,6 +19,11 @@ set -euo pipefail
 : "${CONTAINER_IMAGE:?set to the validated MLite container image}"
 : "${EXPECTED_HY3_COMMIT:?set to the exact Hy3 commit under test}"
 : "${EXPECTED_MLITE_COMMIT:?set to the exact Megatron-LM commit under test}"
+HY3_QAT_PHASE="${HY3_QAT_PHASE:-all}"
+case "$HY3_QAT_PHASE" in
+  all|real|smoke) ;;
+  *) echo "HY3_QAT_PHASE must be all, real, or smoke" >&2; exit 67 ;;
+esac
 
 actual_hy3_commit="$(git -C "$HY3_REPO" rev-parse HEAD)"
 actual_mlite_commit="$(git -C "$MLITE_REPO" rev-parse HEAD)"
@@ -39,6 +44,7 @@ done
 
 echo "HY3_QAT_MODULES hy3=$actual_hy3_commit mlite=$actual_mlite_commit"
 export HY3_REPO MLITE_REPO HY3_REAL_CHECKPOINT MODELOPT_SITE PYTHON_DEPS
+export HY3_QAT_PHASE
 
 srun \
   --container-image="$CONTAINER_IMAGE" \
@@ -65,8 +71,12 @@ assert mlite_source.is_relative_to(
 )
 print(f"HY3_QAT_IMPORTS hy3={hy3_source} mlite={mlite_source}", flush=True)
 PY
-    python -m pytest -q -s \
-      "$HY3_REPO/tests/smoke/test_hy3_mxfp4_qat.py::test_real_hy3_weights_match_modelopt_bitwise"
-    python -m pytest -q -s \
-      "$HY3_REPO/tests/smoke/test_hy3_mxfp4_qat.py::test_qat_checkpoint_forward_and_mxfp4_export"
+    if [[ "$HY3_QAT_PHASE" == all || "$HY3_QAT_PHASE" == real ]]; then
+      python -m pytest -q -s \
+        "$HY3_REPO/tests/smoke/test_hy3_mxfp4_qat.py::test_real_hy3_weights_match_modelopt_bitwise"
+    fi
+    if [[ "$HY3_QAT_PHASE" == all || "$HY3_QAT_PHASE" == smoke ]]; then
+      python -m pytest -q -s \
+        "$HY3_REPO/tests/smoke/test_hy3_mxfp4_qat.py::test_qat_checkpoint_forward_and_mxfp4_export"
+    fi
   '

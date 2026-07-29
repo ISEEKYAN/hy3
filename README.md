@@ -130,6 +130,10 @@ revision, then checks canonical load, BF16 round trip, routed-only packed export
 forward/backward, and bitwise ModelOpt parity on at least 99,090,432 elements
 read from a real Tencent Hy3 checkpoint.
 
+The script defaults to both phases. Set `HY3_QAT_PHASE=real` or
+`HY3_QAT_PHASE=smoke` to rerun one independently while diagnosing a
+scheduler/node issue; neither mode changes the default acceptance contract.
+
 The acceptance does not require downloading the full checkpoint.
 `scripts/prepare_hy3_real_weights.py` reads the pinned official weight index and
 materializes only enough complete safetensors shards to cross the real-weight
