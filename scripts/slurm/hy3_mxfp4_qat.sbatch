@@ -66,5 +66,7 @@ assert mlite_source.is_relative_to(
 print(f"HY3_QAT_IMPORTS hy3={hy3_source} mlite={mlite_source}", flush=True)
 PY
     python -m pytest -q -s \
-      "$HY3_REPO/tests/smoke/test_hy3_mxfp4_qat.py"
+      "$HY3_REPO/tests/smoke/test_hy3_mxfp4_qat.py::test_real_hy3_weights_match_modelopt_bitwise"
+    python -m pytest -q -s \
+      "$HY3_REPO/tests/smoke/test_hy3_mxfp4_qat.py::test_qat_checkpoint_forward_and_mxfp4_export"
   '
