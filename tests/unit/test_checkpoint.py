@@ -135,6 +135,11 @@ def test_qat_master_resolves_to_the_logical_checkpoint_name():
     actual = _resolve_param_name_canonical(logical, model.state_dict())
 
     assert actual == ("layers.0.moe.experts.fc1.parametrizations.weight0.original")
+    spec = Hy3WeightSpec(_config(), load_state_dict=model.state_dict())
+    assert spec.expert_local_name(
+        "layers.0.moe.experts._fc1_weight_0",
+        0,
+    ) == ("layers.0.moe.experts.fc1.parametrizations.weight0.original")
 
 
 def test_mxfp4_export_only_packs_routed_expert_weights():

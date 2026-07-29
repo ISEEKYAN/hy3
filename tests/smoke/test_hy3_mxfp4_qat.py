@@ -114,10 +114,14 @@ def test_qat_checkpoint_forward_and_mxfp4_export(tmp_path: Path):
         load_hf_weights(model, str(checkpoint), config, qat.parallel_state)
         reloaded = dict(export_hf_weights(model, config, qat.parallel_state, cpu=True))
         assert baseline_weights.keys() == reloaded.keys()
-        assert all(
-            torch.equal(baseline_weights[name], reloaded[name])
+        checkpoint_differences = {
+            name: float(
+                (baseline_weights[name].float() - reloaded[name].float()).abs().max()
+            )
             for name in baseline_weights
-        )
+            if not torch.equal(baseline_weights[name], reloaded[name])
+        }
+        assert not checkpoint_differences, checkpoint_differences
 
         masters = {
             name

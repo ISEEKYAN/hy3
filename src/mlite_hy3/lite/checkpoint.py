@@ -73,8 +73,14 @@ def iter_checkpoint_tensors(
 
 
 class Hy3WeightSpec:
-    def __init__(self, config: Hy3Config):
+    def __init__(
+        self,
+        config: Hy3Config,
+        *,
+        load_state_dict: Mapping[str, torch.Tensor] | None = None,
+    ):
         self.config = config
+        self.load_state_dict = load_state_dict
 
     @property
     def num_experts(self) -> int:
@@ -269,7 +275,10 @@ class Hy3WeightSpec:
         native_name = _canonical_state_key(native_name)
         prefix = native_name.rsplit("._fc", 1)[0]
         fc_tag = "fc1" if "_fc1_weight_" in native_name else "fc2"
-        return f"{prefix}.{fc_tag}.weight{local_idx}"
+        logical = f"{prefix}.{fc_tag}.weight{local_idx}"
+        if self.load_state_dict is None:
+            return logical
+        return _resolve_param_name_canonical(logical, self.load_state_dict) or logical
 
 
 def EXPERT_CLASSIFIER(name: str) -> bool:
@@ -298,7 +307,13 @@ def load_hf_weights(model, path: str, config: Hy3Config, ps) -> None:
     original_resolve = hf_weights_module._resolve_param_name
     hf_weights_module._resolve_param_name = _resolve_param_name_canonical
     try:
-        load(model, path, Hy3WeightSpec(config), ps, vocab_size=config.vocab_size)
+        load(
+            model,
+            path,
+            Hy3WeightSpec(config, load_state_dict=model.state_dict()),
+            ps,
+            vocab_size=config.vocab_size,
+        )
     finally:
         hf_weights_module._resolve_param_name = original_resolve
 
