@@ -4,9 +4,9 @@
 #SBATCH --job-name=hy3-mxfp4-qat
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gpus-per-node=1
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=128G
+#SBATCH --mem=64G
 #SBATCH --time=00:30:00
 
 set -euo pipefail
