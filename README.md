@@ -82,6 +82,80 @@ Set `HY3_TOPOLOGY` to `ep2`, `cp2_thd`, or `cp2_ep2`; the last option requires f
 See [the three-way parity report](docs/three-way-parity.md) for the frozen
 references, proxy contract, and exact pairwise metrics.
 
+## Routed-expert MXFP4 QAT
+
+Hy3 exposes Megatron Lite's standard weight-only MXFP4 QAT through
+`ImplConfig.qat`:
+
+```python
+impl = ImplConfig(
+    optimizer="dist_opt",
+    qat={"enabled": True, "format": "mxfp4"},
+)
+bundle = build_model(config, impl_cfg=impl)
+print(bundle.extras["qat"])
+```
+
+The model package only declares target names; fake quantization, STE, the BF16
+master weight, the fixed 32-element MXFP4 block, ModelOpt-compatible numerics,
+and canonical QAT state names remain owned by Megatron Lite's quantization
+primitive. QAT is applied before optimizer construction.
+
+The policy matches K3—quantize every routed-path linear and no other
+component—but the concrete linear set differs. Hy3 quantizes only
+`moe.experts.fc1` and `moe.experts.fc2`, including those in an enabled MTP
+layer. For each local expert, Hy3 `fc1.weightK` is the fused gate-plus-up
+projection and `fc2.weightK` is the down projection. K3 represents the
+corresponding per-expert work as `experts.K.gate_up.weight` and
+`experts.K.down.weight`, and its latent-MoE architecture additionally has
+shared routed-path `routed_expert_down_proj` and `routed_expert_up_proj`
+linears. Hy3 has no equivalent latent bottleneck or routed-expert norm.
+
+Attention, the first dense MLP, the sparse block's shared MLP, embeddings,
+router and correction bias, and `lm_head` stay in BF16. Hy3 also has no
+K3-style standalone attention residual-projection modules: its attention
+output projection is under `attn` and is excluded, while its residual
+additions have no weight to quantize.
+
+The logical scope is the same, but the runtime parameter layout is not. K3's
+reference experts are ordinary linear leaves, while Hy3 uses Transformer
+Engine `GroupedLinear` modules whose local expert masters are named
+`fc1.weight0`, `fc1.weight1`, ..., and `fc2.weight0`, `fc2.weight1`, ....
+Here `K` is the local-expert index: Megatron Lite computes
+`num_local_experts = num_experts / ep_size` and passes that value to each
+`GroupedLinear`. The Hy3 name map targets every such local routed-expert
+parameter explicitly; its exact `fc1`/`fc2` module match and `weight` followed
+only by digits avoid similarly named non-weight state.
+
+`export_hf_weights(..., target="mxfp4")` emits compressed-tensors-style packed
+`weight` plus `weight_scale` pairs for those routed-expert weights only. Plain
+HF/BF16 export remains the default, and checkpoint load maps logical weight
+names onto the surviving
+`parametrizations.weight.original` BF16 master.
+
+The scheduler entry point is
+`scripts/slurm/hy3_mxfp4_qat.sbatch`. Before running the test workload it fails
+if the Hy3 or Megatron-LM commit differs from the explicitly requested
+revision, then checks canonical load, BF16 round trip, routed-only packed export,
+forward/backward, and bitwise ModelOpt parity on at least 99,090,432 elements
+read from a real Tencent Hy3 checkpoint.
+
+The script defaults to both phases. Set `HY3_QAT_PHASE=real` or
+`HY3_QAT_PHASE=smoke` to rerun one independently while diagnosing a
+scheduler/node issue; neither mode changes the default acceptance contract.
+
+The acceptance does not require downloading the full checkpoint.
+`scripts/prepare_hy3_real_weights.py` reads the pinned official weight index and
+materializes only enough complete safetensors shards to cross the real-weight
+element threshold. `scripts/slurm/hy3_real_weights.sbatch` is its CPU-only
+scheduler entry point:
+
+```bash
+python scripts/prepare_hy3_real_weights.py \
+  --revision a960ebc3da325ba167f069f76c41eb62c9280d22 \
+  --output /path/to/hy3-real-weight-subset
+```
+
 ## The four-stage model-support workflow
 
 This port follows the same staged workflow used for internal and external Megatron Lite model integrations.

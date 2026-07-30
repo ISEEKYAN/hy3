@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn as nn
@@ -24,6 +24,9 @@ from mlite_hy3.lite.checkpoint import (
 )
 from mlite_hy3.lite.model import Hy3Model, Hy3TransformerLayer
 
+if TYPE_CHECKING:
+    from megatron.lite.primitive.quantization.qat import QATSpec
+
 
 @dataclass(frozen=True)
 class ImplConfig:
@@ -39,6 +42,7 @@ class ImplConfig:
     mtp_detach_encoder: bool = False
     mtp_loss_scaling_factor: float = 0.1
     deterministic: bool = True
+    qat: QATSpec | dict[str, Any] | None = None
 
 
 MODULE_MAP = {
@@ -113,6 +117,9 @@ def build_model(model_cfg: Hy3Config, *, impl_cfg: ImplConfig) -> ModelBundle:
         .cuda()
         for index in range(vpp or 1)
     ]
+    from mlite_hy3.lite.qat import apply_hy3_qat_to_chunks
+
+    qat_stats = apply_hy3_qat_to_chunks(chunks, impl_cfg.qat)
     if recompute:
         for chunk in chunks:
             apply_recompute(chunk.layers, recompute, MODULE_MAP)
@@ -178,6 +185,7 @@ def build_model(model_cfg: Hy3Config, *, impl_cfg: ImplConfig) -> ModelBundle:
             "pre_forward_hook": MTPLossAutoScaler.set_loss_scale,
             "optimizer_backend": optimizer_backend,
             "post_model_load_hook": post_model_load_hook,
+            "qat": qat_stats,
         },
     )
 
