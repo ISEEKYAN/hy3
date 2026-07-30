@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import re
+
 import torch
 import torch.nn as nn
 import torch.nn.utils.parametrize as parametrize
 
 from mlite_hy3.lite.qat import apply_hy3_qat_to_chunks
+
+
+_ROUTED_EXPERT_WEIGHT = re.compile(r"^layers\.\d+\.moe\.experts\.fc[12]\.weight\d+$")
 
 
 class _Linear(nn.Module):
@@ -23,6 +28,10 @@ class _SplitGroupedLinear(nn.Module):
                 f"weight{expert}",
                 nn.Parameter(torch.randn(2, 32)),
             )
+        self.register_parameter(
+            "weight_scale0",
+            nn.Parameter(torch.ones(2, 1), requires_grad=False),
+        )
 
 
 def _toy_hy3_chunk() -> nn.Module:
@@ -59,6 +68,17 @@ def _toy_hy3_chunk() -> nn.Module:
 
 def test_mxfp4_qat_only_parametrizes_routed_expert_linears():
     chunk = _toy_hy3_chunk()
+    routed_expert_weights = {
+        name
+        for name, _ in chunk.named_parameters()
+        if _ROUTED_EXPERT_WEIGHT.fullmatch(name)
+    }
+    expected_masters = {
+        f"{module}.parametrizations.{parameter}.original"
+        for name in routed_expert_weights
+        for module, parameter in (name.rsplit(".", 1),)
+    }
+
     stats = apply_hy3_qat_to_chunks(
         [chunk], {"enabled": True, "format": "mxfp4", "ignore_patterns": ()}
     )
@@ -69,13 +89,10 @@ def test_mxfp4_qat_only_parametrizes_routed_expert_linears():
         if ".parametrizations.weight" in name and name.endswith(".original")
     }
 
-    assert masters == {
-        "layers.1.moe.experts.fc1.parametrizations.weight0.original",
-        "layers.1.moe.experts.fc1.parametrizations.weight1.original",
-        "layers.1.moe.experts.fc2.parametrizations.weight0.original",
-        "layers.1.moe.experts.fc2.parametrizations.weight1.original",
-    }
-    assert stats["quantized_modules"] == 4
+    assert masters == expected_masters
+    assert len(masters) == len(routed_expert_weights)
+    assert stats["quantized_modules"] == len(routed_expert_weights)
+    assert not any("weight_scale" in name for name in masters)
     assert not any("attn" in name for name in masters)
     assert not any("shared_mlp" in name for name in masters)
     assert not any(".mlp." in name for name in masters)

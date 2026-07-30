@@ -101,21 +101,31 @@ master weight, the fixed 32-element MXFP4 block, ModelOpt-compatible numerics,
 and canonical QAT state names remain owned by Megatron Lite's quantization
 primitive. QAT is applied before optimizer construction.
 
-The scope matches K3's routed-expert policy: only `moe.experts.fc1` and
-`moe.experts.fc2` linears are quantized, including routed experts in an enabled
-MTP layer. Attention, the first dense MLP, the sparse block's shared MLP,
-embeddings, router and correction bias, and `lm_head` stay in BF16. Hy3 has no
-K3-style standalone residual-projection modules: its attention output
-projection is under `attn` and is excluded, while its residual additions have
-no weight to quantize.
+The policy matches K3—quantize every routed-path linear and no other
+component—but the concrete linear set differs. Hy3 quantizes only
+`moe.experts.fc1` and `moe.experts.fc2`, including those in an enabled MTP
+layer. For each local expert, Hy3 `fc1.weightK` is the fused gate-plus-up
+projection and `fc2.weightK` is the down projection. K3 represents the
+corresponding per-expert work as `experts.K.gate_up.weight` and
+`experts.K.down.weight`, and its latent-MoE architecture additionally has
+shared routed-path `routed_expert_down_proj` and `routed_expert_up_proj`
+linears. Hy3 has no equivalent latent bottleneck or routed-expert norm.
+
+Attention, the first dense MLP, the sparse block's shared MLP, embeddings,
+router and correction bias, and `lm_head` stay in BF16. Hy3 also has no
+K3-style standalone attention residual-projection modules: its attention
+output projection is under `attn` and is excluded, while its residual
+additions have no weight to quantize.
 
 The logical scope is the same, but the runtime parameter layout is not. K3's
 reference experts are ordinary linear leaves, while Hy3 uses Transformer
 Engine `GroupedLinear` modules whose local expert masters are named
 `fc1.weight0`, `fc1.weight1`, ..., and `fc2.weight0`, `fc2.weight1`, ....
-The Hy3 name map targets every such local routed-expert parameter explicitly;
-it also remains compatible with a stacked `GroupedLinear.weight` exposed by
-newer Transformer Engine versions.
+Here `K` is the local-expert index: Megatron Lite computes
+`num_local_experts = num_experts / ep_size` and passes that value to each
+`GroupedLinear`. The Hy3 name map targets every such local routed-expert
+parameter explicitly; its exact `fc1`/`fc2` module match and `weight` followed
+only by digits avoid similarly named non-weight state.
 
 `export_hf_weights(..., target="mxfp4")` emits compressed-tensors-style packed
 `weight` plus `weight_scale` pairs for those routed-expert weights only. Plain

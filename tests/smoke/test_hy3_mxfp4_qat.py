@@ -128,7 +128,10 @@ def test_qat_checkpoint_forward_and_mxfp4_export(tmp_path: Path):
             for name, _ in model.named_parameters()
             if ".parametrizations.weight" in name and name.endswith(".original")
         }
-        assert len(masters) == 4, sorted(masters)
+        assert len(masters) == len(routed_parameter_names), {
+            "masters": sorted(masters),
+            "routed_parameter_names": routed_parameter_names,
+        }
         assert all(".moe.experts." in name for name in masters), sorted(masters)
         assert not any(".shared_mlp." in name for name in masters)
         assert qat.extras["qat"]["quantized_modules"] == len(masters)
