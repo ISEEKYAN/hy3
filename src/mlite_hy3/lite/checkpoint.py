@@ -278,7 +278,7 @@ class Hy3WeightSpec:
         logical = f"{prefix}.{fc_tag}.weight{local_idx}"
         if self.load_state_dict is None:
             return logical
-        return _resolve_param_name_canonical(logical, self.load_state_dict) or logical
+        return _resolve_param_name_canonical(logical, self.load_state_dict)
 
 
 def EXPERT_CLASSIFIER(name: str) -> bool:
@@ -361,17 +361,24 @@ def _export_mxfp4_weights(weights):
         yield f"{name[:-7]}.weight_scale", scale.view(torch.uint8)
 
 
-def _resolve_param_name_canonical(name: str, state_dict: dict) -> str | None:
-    """Resolve one logical checkpoint name onto its QAT BF16 master."""
-    canonical = {_canonical_state_key(key): key for key in state_dict}
+def _resolve_param_name_canonical(name: str, state_dict: dict) -> str:
+    """Resolve one logical checkpoint name onto exactly one QAT BF16 master."""
     if name in state_dict:
         return name
-    if name in canonical:
-        return canonical[name]
-    for logical, key in canonical.items():
-        if name in logical:
-            return key
-    return None
+    matches = [
+        key
+        for key in state_dict
+        if (logical := _canonical_state_key(key)) == name
+        or logical.endswith(f".{name}")
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise KeyError(f"checkpoint parameter {name!r} has no model-state match")
+    raise ValueError(
+        f"checkpoint parameter {name!r} has ambiguous model-state matches: "
+        f"{sorted(matches)}"
+    )
 
 
 def save_hf_weights(model, path: str, config: Hy3Config, ps) -> None:

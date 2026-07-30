@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 import torch.nn as nn
 
@@ -140,6 +141,31 @@ def test_qat_master_resolves_to_the_logical_checkpoint_name():
         "layers.0.moe.experts._fc1_weight_0",
         0,
     ) == ("layers.0.moe.experts.fc1.parametrizations.weight0.original")
+
+
+def test_qat_master_resolution_does_not_confuse_weight1_with_weight10():
+    state_dict = {
+        "layers.0.moe.experts.fc1.parametrizations.weight10.original": torch.ones(1)
+    }
+
+    with pytest.raises(KeyError, match="weight1.*no model-state match"):
+        _resolve_param_name_canonical(
+            "layers.0.moe.experts.fc1.weight1",
+            state_dict,
+        )
+
+
+def test_qat_master_resolution_rejects_missing_and_ambiguous_names():
+    logical = "layers.0.moe.experts.fc1.weight1"
+    with pytest.raises(KeyError, match="no model-state match"):
+        _resolve_param_name_canonical(logical, {})
+
+    state_dict = {
+        f"first.{logical}": torch.ones(1),
+        f"second.{logical}": torch.ones(1),
+    }
+    with pytest.raises(ValueError, match="ambiguous model-state matches"):
+        _resolve_param_name_canonical(logical, state_dict)
 
 
 def test_mxfp4_export_only_packs_routed_expert_weights():
