@@ -8,6 +8,7 @@ from mlite_hy3.config import Hy3Config
 from mlite_hy3.lite.checkpoint import (
     Hy3WeightSpec,
     _export_mxfp4_weights,
+    _resolve_optional_param_name_canonical,
     _resolve_param_name_canonical,
     iter_checkpoint_tensors,
 )
@@ -166,6 +167,18 @@ def test_qat_master_resolution_rejects_missing_and_ambiguous_names():
     }
     with pytest.raises(ValueError, match="ambiguous model-state matches"):
         _resolve_param_name_canonical(logical, state_dict)
+    with pytest.raises(ValueError, match="ambiguous model-state matches"):
+        _resolve_optional_param_name_canonical(logical, state_dict)
+
+
+def test_optional_dense_resolution_allows_a_missing_disabled_component():
+    assert (
+        _resolve_optional_param_name_canonical(
+            "mtp_embed.embedding.weight",
+            {},
+        )
+        is None
+    )
 
 
 def test_mxfp4_export_only_packs_routed_expert_weights():

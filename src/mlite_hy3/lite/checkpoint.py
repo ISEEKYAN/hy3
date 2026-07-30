@@ -305,7 +305,7 @@ def load_hf_weights(model, path: str, config: Hy3Config, ps) -> None:
     from megatron.lite.primitive.ckpt.hf_weights import load_hf_weights as load
 
     original_resolve = hf_weights_module._resolve_param_name
-    hf_weights_module._resolve_param_name = _resolve_param_name_canonical
+    hf_weights_module._resolve_param_name = _resolve_optional_param_name_canonical
     try:
         load(
             model,
@@ -361,7 +361,12 @@ def _export_mxfp4_weights(weights):
         yield f"{name[:-7]}.weight_scale", scale.view(torch.uint8)
 
 
-def _resolve_param_name_canonical(name: str, state_dict: dict) -> str:
+def _resolve_param_name_canonical(
+    name: str,
+    state_dict: dict,
+    *,
+    required: bool = True,
+) -> str | None:
     """Resolve one logical checkpoint name onto exactly one QAT BF16 master."""
     if name in state_dict:
         return name
@@ -374,11 +379,18 @@ def _resolve_param_name_canonical(name: str, state_dict: dict) -> str:
     if len(matches) == 1:
         return matches[0]
     if not matches:
+        if not required:
+            return None
         raise KeyError(f"checkpoint parameter {name!r} has no model-state match")
     raise ValueError(
         f"checkpoint parameter {name!r} has ambiguous model-state matches: "
         f"{sorted(matches)}"
     )
+
+
+def _resolve_optional_param_name_canonical(name: str, state_dict: dict) -> str | None:
+    """Resolve an optional dense mapping while still rejecting ambiguity."""
+    return _resolve_param_name_canonical(name, state_dict, required=False)
 
 
 def save_hf_weights(model, path: str, config: Hy3Config, ps) -> None:
