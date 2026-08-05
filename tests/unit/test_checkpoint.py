@@ -50,9 +50,7 @@ def test_weight_spec_round_trips_qkv_dense_and_shared_swiglu():
     query = torch.arange(8 * hidden).reshape(8, hidden)
     key = torch.arange(4 * hidden).reshape(4, hidden) + 1000
     value = torch.arange(4 * hidden).reshape(4, hidden) + 2000
-    packed = spec.hf_to_native(
-        "layers.0.attn.qkv.linear.weight", [query, key, value]
-    )
+    packed = spec.hf_to_native("layers.0.attn.qkv.linear.weight", [query, key, value])
     qkv = dict(spec.native_to_hf("layers.0.attn.qkv.linear.weight", packed))
     assert torch.equal(qkv["model.layers.0.self_attn.q_proj.weight"], query)
     assert torch.equal(qkv["model.layers.0.self_attn.k_proj.weight"], key)
@@ -76,6 +74,24 @@ def test_weight_spec_round_trips_qkv_dense_and_shared_swiglu():
             for name, tensor in exported.items()
             if "up_proj" in name
         )
+
+
+def test_weight_spec_declares_gqa_layout_for_all_fused_qkv_weights():
+    config = _config()
+    spec = Hy3WeightSpec(config)
+
+    expected = (
+        config.num_attention_heads,
+        config.num_key_value_heads,
+        config.head_dim,
+    )
+    assert spec.qkv_spec("layers.0.attn.qkv.linear.weight") == expected
+    assert (
+        spec.qkv_spec("mtp.layers.0.transformer_layer.attn.qkv.linear.weight")
+        == expected
+    )
+    assert spec.qkv_spec("layers.0.attn.qkv.linear.layer_norm_weight") is None
+    assert spec.qkv_spec("layers.0.attn.proj.linear.weight") is None
 
 
 def test_weight_spec_exports_runtime_expert_parameter_names():

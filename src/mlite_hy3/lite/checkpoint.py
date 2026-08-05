@@ -27,7 +27,9 @@ def pack_grouped_query_qkv(
     query = query.view(num_key_value_heads, queries_per_group * head_dim, -1)
     key = key.view(num_key_value_heads, head_dim, -1)
     value = value.view(num_key_value_heads, head_dim, -1)
-    return torch.cat([query, key, value], dim=1).reshape(-1, query.shape[-1]).contiguous()
+    return (
+        torch.cat([query, key, value], dim=1).reshape(-1, query.shape[-1]).contiguous()
+    )
 
 
 def unpack_grouped_query_qkv(
@@ -90,7 +92,9 @@ class Hy3WeightSpec:
                 ],
                 f"{native_prefix}.attn.q_norm.weight": [f"{attention}.q_norm.weight"],
                 f"{native_prefix}.attn.k_norm.weight": [f"{attention}.k_norm.weight"],
-                f"{native_prefix}.attn.proj.linear.weight": [f"{attention}.o_proj.weight"],
+                f"{native_prefix}.attn.proj.linear.weight": [
+                    f"{attention}.o_proj.weight"
+                ],
                 f"{native_prefix}.mlp_norm.weight": [
                     f"{hf_prefix}.post_attention_layernorm.weight"
                 ],
@@ -106,7 +110,9 @@ class Hy3WeightSpec:
         mlp = f"{hf_prefix}.mlp"
         weight_map.update(
             {
-                f"{native_prefix}.moe.router.gate.weight": [f"{mlp}.router.gate.weight"],
+                f"{native_prefix}.moe.router.gate.weight": [
+                    f"{mlp}.router.gate.weight"
+                ],
                 f"{native_prefix}.moe.router.expert_bias": [f"{mlp}.expert_bias"],
                 f"{native_prefix}.moe.shared_mlp.gate_up.linear.weight": [
                     f"{mlp}.shared_mlp.gate_proj.weight",
@@ -158,14 +164,18 @@ class Hy3WeightSpec:
                     f"{native}.enorm.weight": [f"{hf}.enorm.weight"],
                     f"{native}.hnorm.weight": [f"{hf}.hnorm.weight"],
                     f"{native}.eh_proj.linear.weight": [f"{hf}.eh_proj.weight"],
-                    f"{native}.final_layernorm.weight": [f"{hf}.final_layernorm.weight"],
+                    f"{native}.final_layernorm.weight": [
+                        f"{hf}.final_layernorm.weight"
+                    ],
                 }
             )
             self._add_attention(result, transformer, hf)
             self._add_sparse_mlp(result, transformer, hf)
         return result
 
-    def hf_to_native(self, native_name: str, tensors: list[torch.Tensor]) -> torch.Tensor:
+    def hf_to_native(
+        self, native_name: str, tensors: list[torch.Tensor]
+    ) -> torch.Tensor:
         if len(tensors) == 3:
             return pack_grouped_query_qkv(
                 *tensors,
@@ -203,6 +213,12 @@ class Hy3WeightSpec:
         return [(targets[0], tensor)]
 
     def qkv_spec(self, native_name: str) -> tuple[int, int, int] | None:
+        if native_name.endswith(".attn.qkv.linear.weight"):
+            return (
+                self.config.num_attention_heads,
+                self.config.num_key_value_heads,
+                self.config.head_dim,
+            )
         return None
 
     def tp_spec(self, native_name: str) -> tuple[int, int] | None:
@@ -268,7 +284,9 @@ def load_hf_weights(model, path: str, config: Hy3Config, ps) -> None:
 def export_hf_weights(model, config: Hy3Config, ps, **kwargs):
     from megatron.lite.primitive.ckpt.hf_weights import export_hf_weights as export
 
-    yield from export(model, Hy3WeightSpec(config), ps, vocab_size=config.vocab_size, **kwargs)
+    yield from export(
+        model, Hy3WeightSpec(config), ps, vocab_size=config.vocab_size, **kwargs
+    )
 
 
 def save_hf_weights(model, path: str, config: Hy3Config, ps) -> None:
